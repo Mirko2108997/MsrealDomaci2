@@ -140,7 +140,7 @@ static void setup_and_start_timer(uint64_t milliseconds)
 {
 	// Disable Timer Counter
 	uint64_t timer_load;
-       	uint32_t data = 0;
+    uint32_t data = 0;
 	uint32_t timer_load0;
 	uint32_t timer_load1;
 	timer_load = milliseconds*100000000;
@@ -184,7 +184,6 @@ static void setup_and_start_timer(uint64_t milliseconds)
 	iowrite32(data & ~(XIL_AXI_TIMER_CSR_LOAD_MASK),
 			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
         
-	
 	// Enable interrupts and autoreload, rest should be zero
 	iowrite32(XIL_AXI_TIMER_CSR_ENABLE_INT_MASK | XIL_AXI_TIMER_CSR_AUTO_RELOAD_MASK,
 			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
@@ -308,9 +307,47 @@ int timer_close(struct inode *pinode, struct file *pfile)
 
 ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_t *offset) 
 {
-
-	//printk(KERN_INFO "Succesfully read timer\n");
-	return 0;
+	uint64_t ukupno,uksec;
+	uint32_t donji, gornji;
+	uint32_t dani, sati, minute, sekunde;
+	
+	int ret;
+	long int len = 0;
+	char buff[BUFF_SIZE];
+	
+	if (endRead){
+		endRead = 0;
+		printk(KERN_INFO "Succesfully read from file\n");
+		return 0;
+	}
+	
+	donji = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR0_OFFSET);
+	gornji = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);
+	ukupno = gornji;
+	ukupno = ukupno << 32;
+	ukupno = ukupno + donji;
+	
+	uksec = div_u64(ukupno,100000000);
+	
+	dani = div_u64(div_u64(div_u64(uksec,60),60),24);
+	uksec = uksec - (dani * 60 * 60 *24);
+	
+	sati = div_u64(div_u64(uksec,60),60);
+	uksec = uksec - (sati * 60 * 60);
+	
+	minute = div_u64(uksec,60);
+	uksec = uksec - (minute * 60);
+	
+	sekunde = uksec;
+	
+	len = scnprintf(buff, BUFF_SIZE, "dani: %u , sati: %u , minute: %u , sekunde %u \n", dani, sati, minute, sekunde);
+	ret = copy_to_user(buffer, buff, len);
+	
+	if(ret)
+		return -EFAULT;
+	endRead = 1;
+	
+	return len;
 }
 
 ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset) 
@@ -325,31 +362,7 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 	if(ret)
 		return -EFAULT;
 	buff[length] = '\0';
-	
-	if (stop == 0){
-		ret = sscanf(buff,"%llu,%llu,%llu,%llu",&dd,&hh,&mm,&ss);
-		number = 24 * 60 * 60 * dd + 60 * 60 * hh + 60 * mm + ss;
-		if(ret == 4)//4 parameters parsed in sscanf
-		{
-
-			if (number > 0xffffffffffffffff)
-			{
-				printk(KERN_WARNING "xilaxitimer_write: Maximum period exceeded, enter something less than 40000 \n");
-			}
-			else
-			{
-				printk(KERN_INFO "xilaxitimer_write: Starting timer for %llu interrupts. \n",number);
-				setup_and_start_timer(number);
-			}
-		}
-		else
-		{
-			printk(KERN_WARNING "xilaxitimer_write: Wrong format, expected n,t \n\t n-number of interrupts\n\t t-time in ms between interrupts\n");
-		}
-		
-		start = 1;
-	}
-		
+			
 	if (strstr(buff,"start") == buff)
 	{	
 		if(start){
@@ -378,6 +391,29 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 		}
 	}
 	
+	else if (stop == 0){
+		ret = sscanf(buff,"%llu,%llu,%llu,%llu",&dd,&hh,&mm,&ss);
+		number = 24 * 60 * 60 * dd + 60 * 60 * hh + 60 * mm + ss;
+		if(ret == 4)//4 parameters parsed in sscanf
+		{
+
+			if (number > 0xffffffffffffffff)
+			{
+				printk(KERN_WARNING "xilaxitimer_write: Maximum period exceeded, enter something less than 40000 \n");
+			}
+			else
+			{
+				printk(KERN_INFO "xilaxitimer_write: Starting timer for %llu interrupts. \n",number);
+				setup_and_start_timer(number);
+			}
+		}
+		else
+		{
+			printk(KERN_WARNING "xilaxitimer_write: Wrong format, expected n,t \n\t n-number of interrupts\n\t t-time in ms between interrupts\n");
+		}
+		
+		start = 1;
+	}
 	
 	return length;
 }
